@@ -17,16 +17,18 @@ export const uploadBIM = async (req, res) => {
 
     const existingBIM = await pool.query("SELECT * FROM arquivos_bim WHERE obra_id = $1", [projectId])
 
+    const s3Key = req.file.key // multer-s3 fornece a chave diretamente
+
     let result
 
     if (existingBIM.rows.length > 0) {
       const updateQuery = `
         UPDATE arquivos_bim 
-        SET nome_arquivo = $1, tipo_arquivo = $2, tamanho_arquivo = $3, url_s3 = $4, updated_at = CURRENT_TIMESTAMP
-        WHERE obra_id = $5
+        SET nome_arquivo = $1, tipo_arquivo = $2, tamanho_arquivo = $3, url_s3 = $4, s3_key = $5, updated_at = CURRENT_TIMESTAMP
+        WHERE obra_id = $6
         RETURNING *
       `
-      const values = [req.file.originalname, req.file.mimetype, req.file.size, req.file.location, projectId]
+      const values = [req.file.originalname, req.file.mimetype, req.file.size, req.file.location, s3Key, projectId]
       result = await pool.query(updateQuery, values)
 
       res.json({
@@ -35,11 +37,11 @@ export const uploadBIM = async (req, res) => {
       })
     } else {
       const insertQuery = `
-        INSERT INTO arquivos_bim (obra_id, nome_arquivo, tipo_arquivo, tamanho_arquivo, url_s3)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO arquivos_bim (obra_id, nome_arquivo, tipo_arquivo, tamanho_arquivo, url_s3, s3_key)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
       `
-      const values = [projectId, req.file.originalname, req.file.mimetype, req.file.size, req.file.location]
+      const values = [projectId, req.file.originalname, req.file.mimetype, req.file.size, req.file.location, s3Key]
       result = await pool.query(insertQuery, values)
 
       res.status(201).json({
@@ -82,6 +84,7 @@ export const deletarArquivoBIM = async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Arquivo BIM não encontrado" })
     }
+
     res.json({
       message: "Arquivo BIM deletado com sucesso",
       arquivo: formatDatesInObject(result.rows[0]),
@@ -104,16 +107,13 @@ export const downloadArquivoBIM = async (req, res) => {
 
     const arquivo = result.rows[0]
 
-    let s3Key
-    if (arquivo.url_s3.includes("localhost:4566")) {
-      s3Key = arquivo.url_s3.split(`${process.env.S3_BUCKET_NAME}/`)[1]
-    } else {
-      s3Key = arquivo.url_s3.split(".com/")[1]
-    }
+    const s3Key = arquivo.s3_key || arquivo.url_s3.split(`${process.env.S3_BUCKET_NAME}/`)[1]
 
     if (!s3Key) {
-      throw new Error("Não foi possível extrair a chave do arquivo S3")
+      throw new Error("Não foi possível obter a chave do arquivo S3")
     }
+
+    console.log("[v0] Gerando URL pré-assinada para a chave:", s3Key)
 
     const downloadUrl = await generatePresignedUrl(s3Key, arquivo.nome_arquivo)
 
