@@ -15,15 +15,15 @@ const s3Config = {
   region: process.env.AWS_REGION,
 }
 
-
+// Se AWS_ENDPOINT estiver definido (LocalStack), adiciona à configuração
 if (process.env.AWS_ENDPOINT) {
   s3Config.endpoint = process.env.AWS_ENDPOINT
-  s3Config.forcePathStyle = true 
+  s3Config.forcePathStyle = true // Necessário para LocalStack
 }
 
 const s3Client = new S3Client(s3Config)
 
-
+// Upload de fotos
 export const uploadFoto = multer({
   storage: multerS3({
     s3: s3Client,
@@ -36,7 +36,7 @@ export const uploadFoto = multer({
       cb(null, fileName)
     },
   }),
-  limits: { fileSize: 10 * 1024 * 1024 }, 
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) {
       cb(null, true)
@@ -46,20 +46,19 @@ export const uploadFoto = multer({
   },
 })
 
-
+// Upload de arquivos BIM
 export const uploadBIM = multer({
   storage: multerS3({
     s3: s3Client,
     bucket: process.env.S3_BUCKET_NAME,
     acl: "private",
     key: (req, file, cb) => {
-      const projectId = req.params.projectId || "unknown"
       const timestamp = Date.now()
-      const fileName = `bim/${projectId}/${timestamp}-${file.originalname}`
+      const fileName = `bim/${timestamp}-${file.originalname}`
       cb(null, fileName)
     },
   }),
-  limits: { fileSize: 100 * 1024 * 1024 }, 
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
   fileFilter: (req, file, cb) => {
     const allowedExtensions = [".ifc", ".rvt", ".nwd", ".nwc", ".dwg", ".dxf"]
     const ext = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf("."))
@@ -71,7 +70,7 @@ export const uploadBIM = multer({
   },
 })
 
-
+// Função para gerar URL pré-assinada
 export async function generatePresignedUrl(key) {
   const command = new GetObjectCommand({
     Bucket: process.env.S3_BUCKET_NAME,

@@ -1,29 +1,48 @@
 import pool from "../config/database.js"
 import { parseDateToDB, formatDatesInObject } from "../utils/dateFormatter.js"
 
-
+// Criar nova obra
 export const criarObra = async (req, res) => {
+  const client = await pool.connect()
+
   try {
+    console.log("[v0] Recebendo requisição para criar obra com arquivo BIM")
+    console.log("[v0] Body recebido:", req.body)
+    console.log("[v0] Arquivo recebido:", req.file)
+
     const { nome_obra, responsavel_obra, localizacao, previsao_termino, observacoes, data_inicio } = req.body
 
-    
+    // Validação básica
     if (!nome_obra || !responsavel_obra || !localizacao || !previsao_termino) {
+      console.log("[v0] Validação falhou - campos obrigatórios faltando")
       return res.status(400).json({
         error: "Campos obrigatórios faltando",
         required: ["nome_obra", "responsavel_obra", "localizacao", "previsao_termino"],
       })
     }
 
+    if (!req.file) {
+      console.log("[v0] Validação falhou - arquivo BIM obrigatório")
+      return res.status(400).json({
+        error: "Arquivo BIM é obrigatório",
+      })
+    }
+
+    console.log("[v0] Convertendo datas...")
     const dataInicioDB = parseDateToDB(data_inicio)
     const previsaoTerminoDB = parseDateToDB(previsao_termino)
+    console.log("[v0] Data início convertida:", dataInicioDB)
+    console.log("[v0] Previsão término convertida:", previsaoTerminoDB)
 
-    const query = `
+    await client.query("BEGIN")
+
+    const obraQuery = `
       INSERT INTO obras (nome_obra, responsavel_obra, localizacao, data_inicio, previsao_termino, observacoes)
       VALUES ($1, $2, $3, COALESCE($4, CURRENT_DATE), $5, $6)
       RETURNING *
     `
 
-    const values = [
+    const obraValues = [
       nome_obra,
       responsavel_obra,
       localizacao,
@@ -31,21 +50,52 @@ export const criarObra = async (req, res) => {
       previsaoTerminoDB,
       observacoes || null,
     ]
-    const result = await pool.query(query, values)
 
-    const obraFormatada = formatDatesInObject(result.rows[0])
+    console.log("[v0] Criando obra no banco...")
+    const obraResult = await client.query(obraQuery, obraValues)
+    const obra = obraResult.rows[0]
+    console.log("[v0] Obra criada com ID:", obra.id)
+
+    const bimQuery = `
+      INSERT INTO arquivos_bim (obra_id, nome_arquivo, tipo_arquivo, tamanho_arquivo, url_s3, s3_key)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `
+
+    const bimValues = [
+      obra.id,
+      req.file.originalname,
+      req.file.mimetype,
+      req.file.size,
+      req.file.location,
+      req.file.key,
+    ]
+
+    console.log("[v0] Salvando metadados do arquivo BIM...")
+    const bimResult = await client.query(bimQuery, bimValues)
+    console.log("[v0] Arquivo BIM vinculado à obra")
+
+    await client.query("COMMIT")
+
+    const obraFormatada = formatDatesInObject(obra)
+    const bimFormatado = formatDatesInObject(bimResult.rows[0])
 
     res.status(201).json({
-      message: "Obra criada com sucesso",
+      message: "Obra criada com sucesso com arquivo BIM",
       obra: obraFormatada,
+      arquivoBim: bimFormatado,
     })
   } catch (error) {
-    console.error("Erro ao criar obra:", error)
-    res.status(500).json({ error: "Erro ao criar obra" })
+    await client.query("ROLLBACK")
+    console.error("[v0] Erro ao criar obra:", error)
+    console.error("[v0] Stack trace:", error.stack)
+    res.status(500).json({ error: "Erro ao criar obra", details: error.message })
+  } finally {
+    client.release()
   }
 }
 
-
+// Editar obra existente
 export const editarObra = async (req, res) => {
   try {
     const { id } = req.params
@@ -97,7 +147,7 @@ export const editarObra = async (req, res) => {
   }
 }
 
-
+// Listar obras ativas
 export const listarObrasAtivas = async (req, res) => {
   try {
     const query = `
@@ -119,7 +169,7 @@ export const listarObrasAtivas = async (req, res) => {
   }
 }
 
-
+// Obter detalhes de uma obra específica
 export const obterObraDetalhes = async (req, res) => {
   try {
     const { id } = req.params
@@ -152,7 +202,7 @@ export const obterObraDetalhes = async (req, res) => {
   }
 }
 
-
+// Deletar obra
 export const deletarObra = async (req, res) => {
   try {
     const { id } = req.params
@@ -173,7 +223,7 @@ export const deletarObra = async (req, res) => {
   }
 }
 
-
+// Atualizar progresso da obra
 export const atualizarProgresso = async (req, res) => {
   try {
     const { id } = req.params
