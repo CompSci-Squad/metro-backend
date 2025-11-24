@@ -1,0 +1,133 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    container_name: construction-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: construction_monitoring
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts:/docker-entrypoint-initdb.d
+    networks:
+      - construction-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # LocalStack (AWS S3 emulator)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: construction-localstack
+    restart: unless-stopped
+    ports:
+      - "4566:4566"
+      - "4571:4571"
+    environment:
+      SERVICES: s3
+      DEBUG: 0
+      DATA_DIR: /tmp/localstack/data
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DEFAULT_REGION: us-east-1
+    volumes:
+      - localstack_data:/tmp/localstack
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    networks:
+      - construction-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: construction-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: construction_monitoring
+      DB_USER: postgres
+      DB_PASSWORD: postgres123
+      
+      # AWS S3 (LocalStack)
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://localstack:4566
+      S3_BUCKET_NAME: construction-monitoring-bucket
+      
+      # VIRAG-BIM API (configure with your ngrok URL)
+      NGROK_URL: ${NGROK_URL:-https://your-ngrok-url.ngrok-free.app}
+      VIRAG_API_KEY: ${VIRAG_API_KEY:-your_api_key}
+      
+      # Server
+      PORT: 3000
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    networks:
+      - construction-network
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # AWS CLI for LocalStack initialization
+  localstack-init:
+    image: amazon/aws-cli
+    container_name: construction-localstack-init
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: /bin/sh
+    command: >
+      -c "
+      echo 'Waiting for LocalStack to be ready...';
+      sleep 10;
+      echo 'Creating S3 bucket...';
+      aws --endpoint-url=http://localstack:4566 s3 mb s3://construction-monitoring-bucket || true;
+      echo 'Listing S3 buckets...';
+      aws --endpoint-url=http://localstack:4566 s3 ls;
+      echo 'LocalStack initialization complete!';
+      "
+    networks:
+      - construction-network
+
+networks:
+  construction-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  localstack_data:
+    driver: local

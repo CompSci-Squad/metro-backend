@@ -1,5 +1,17 @@
 import pool from "../config/database.js"
 import { parseDateToDB, formatDatesInObject } from "../utils/dateFormatter.js"
+import { uploadBimToVirag } from "../services/viragService.js"
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3"
+
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION || "us-east-1",
+  endpoint: process.env.AWS_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+  forcePathStyle: true,
+})
 
 // Criar nova obra
 export const criarObra = async (req, res) => {
@@ -76,6 +88,62 @@ export const criarObra = async (req, res) => {
     console.log("[v0] Arquivo BIM vinculado à obra")
 
     await client.query("COMMIT")
+
+    try {
+      console.log("[v0] Baixando arquivo BIM do S3 para enviar à IA...")
+
+      const getObjectCommand = new GetObjectCommand({
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: req.file.key,
+      })
+
+      const s3Response = await s3Client.send(getObjectCommand)
+      const chunks = []
+
+      for await (const chunk of s3Response.Body) {
+        chunks.push(chunk)
+      }
+
+      const fileBuffer = Buffer.concat(chunks)
+
+      const viragResponse = await uploadBimToVirag(fileBuffer, req.file.originalname, {
+        project_id: obra.id,
+        nome_obra: obra.nome_obra,
+        localizacao: obra.localizacao,
+        observacoes: obra.observacoes,
+      })
+
+      if (viragResponse.success) {
+        console.log("[v0] Arquivo BIM processado pela IA com sucesso")
+
+        const relatorioQuery = `
+          INSERT INTO relatorios (obra_id, titulo, conteudo)
+          VALUES ($1, $2, $3)
+          RETURNING *
+        `
+
+        const relatorioValues = [
+          obra.id,
+          "Processamento BIM Inicial",
+          JSON.stringify({
+            virag_project_id: viragResponse.data.project_id,
+            total_elements: viragResponse.data.total_elements,
+            processing_time: viragResponse.data.processing_time,
+            s3_key: viragResponse.data.s3_key,
+            message: viragResponse.data.message,
+            processed_at: new Date().toISOString(),
+          }),
+        ]
+
+        await pool.query(relatorioQuery, relatorioValues)
+        console.log("[v0] Relatório de processamento BIM criado")
+      } else {
+        console.error("[v0] Erro ao processar BIM na IA:", viragResponse.error)
+      }
+    } catch (aiError) {
+      console.error("[v0] Erro ao enviar BIM para IA (não crítico):", aiError.message)
+      // Não falha a criação do projeto se a IA falhar
+    }
 
     const obraFormatada = formatDatesInObject(obra)
     const bimFormatado = formatDatesInObject(bimResult.rows[0])

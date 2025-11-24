@@ -29,6 +29,11 @@ export const uploadFoto = multer({
     s3: s3Client,
     bucket: process.env.S3_BUCKET_NAME,
     acl: "private",
+    contentType: multerS3.AUTO_CONTENT_TYPE,
+    contentDisposition: "inline",
+    metadata: (req, file, cb) => {
+      cb(null, { fieldName: file.fieldname })
+    },
     key: (req, file, cb) => {
       const projectId = req.params.projectId || "unknown"
       const timestamp = Date.now()
@@ -58,7 +63,6 @@ export const uploadBIM = multer({
       cb(null, fileName)
     },
   }),
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
   fileFilter: (req, file, cb) => {
     const allowedExtensions = [".ifc", ".rvt", ".nwd", ".nwc", ".dwg", ".dxf"]
     const ext = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf("."))

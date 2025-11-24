@@ -1,5 +1,5 @@
 -- Criação do banco de dados para Sistema de Monitoramento de Obras
--- Versão consolidada com ID aleatório e data de início automática
+-- Versão consolidada com todas as configurações
 
 -- Função para gerar IDs aleatórios únicos
 CREATE OR REPLACE FUNCTION generate_random_id()
@@ -18,7 +18,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Tabela de Obras
--- ID mudado para INTEGER com geração aleatória, data_inicio com default CURRENT_DATE
 CREATE TABLE IF NOT EXISTS obras (
     id INTEGER PRIMARY KEY DEFAULT generate_random_id(),
     nome_obra VARCHAR(255) NOT NULL,
@@ -34,7 +33,6 @@ CREATE TABLE IF NOT EXISTS obras (
 );
 
 -- Tabela de Fotos
--- obra_id mudado para INTEGER para corresponder ao novo tipo de ID
 CREATE TABLE IF NOT EXISTS fotos (
     id SERIAL PRIMARY KEY,
     obra_id INTEGER NOT NULL REFERENCES obras(id) ON DELETE CASCADE,
@@ -46,17 +44,21 @@ CREATE TABLE IF NOT EXISTS fotos (
 );
 
 -- Tabela de Relatórios
--- obra_id mudado para INTEGER
+-- Adicionadas colunas para integração com IA VIRAG-BIM e geração de PDFs
 CREATE TABLE IF NOT EXISTS relatorios (
     id SERIAL PRIMARY KEY,
     obra_id INTEGER NOT NULL REFERENCES obras(id) ON DELETE CASCADE,
     nome_relatorio VARCHAR(255) NOT NULL,
     conteudo_json JSONB NOT NULL,
+    analysis_id VARCHAR(255) UNIQUE,
+    pdf_s3_key TEXT,
+    analyzed_at TIMESTAMP,
+    overall_progress DECIMAL(5,4),
+    sequence_number INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Adicionada coluna s3_key para armazenar a chave S3 diretamente
--- Tabela de Arquivos BIM agora com relação 1:1 com obras (UNIQUE constraint em obra_id)
+-- Tabela de Arquivos BIM
 CREATE TABLE IF NOT EXISTS arquivos_bim (
     id SERIAL PRIMARY KEY,
     obra_id INTEGER NOT NULL UNIQUE REFERENCES obras(id) ON DELETE CASCADE,
@@ -73,7 +75,8 @@ CREATE TABLE IF NOT EXISTS arquivos_bim (
 CREATE INDEX IF NOT EXISTS idx_obras_status ON obras(status);
 CREATE INDEX IF NOT EXISTS idx_fotos_obra_id ON fotos(obra_id);
 CREATE INDEX IF NOT EXISTS idx_relatorios_obra_id ON relatorios(obra_id);
--- Adicionado índice para s3_key
+-- Adicionado índice para analysis_id da IA
+CREATE INDEX IF NOT EXISTS idx_relatorios_analysis_id ON relatorios(analysis_id);
 CREATE INDEX IF NOT EXISTS idx_arquivos_bim_s3_key ON arquivos_bim(s3_key);
 
 -- Trigger para atualizar updated_at automaticamente
@@ -90,7 +93,6 @@ CREATE TRIGGER update_obras_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Trigger para atualizar updated_at em arquivos_bim
 CREATE TRIGGER update_arquivos_bim_updated_at
     BEFORE UPDATE ON arquivos_bim
     FOR EACH ROW
@@ -99,5 +101,12 @@ CREATE TRIGGER update_arquivos_bim_updated_at
 -- Comentários nas tabelas
 COMMENT ON TABLE obras IS 'Tabela principal de projetos de construção';
 COMMENT ON TABLE fotos IS 'Fotos das obras armazenadas no S3';
-COMMENT ON TABLE relatorios IS 'Relatórios em formato JSON';
+COMMENT ON TABLE relatorios IS 'Relatórios em formato JSON com suporte a análises da IA';
 COMMENT ON TABLE arquivos_bim IS 'Arquivo BIM único por projeto armazenado no S3';
+
+-- Comentários nas colunas de relatórios
+COMMENT ON COLUMN relatorios.analysis_id IS 'ID único da análise da IA VIRAG-BIM (relação 1:1)';
+COMMENT ON COLUMN relatorios.pdf_s3_key IS 'Chave S3 do PDF gerado';
+COMMENT ON COLUMN relatorios.analyzed_at IS 'Data/hora da análise da IA';
+COMMENT ON COLUMN relatorios.overall_progress IS 'Progresso geral da obra no momento da análise';
+COMMENT ON COLUMN relatorios.sequence_number IS 'Número sequencial da foto/análise';
