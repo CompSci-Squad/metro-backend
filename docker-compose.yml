@@ -10,9 +10,8 @@ services:
       POSTGRES_DB: construction_monitoring
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres123
-      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts:/docker-entrypoint-initdb.d
@@ -31,16 +30,13 @@ services:
     restart: unless-stopped
     ports:
       - "4566:4566"
-      - "4571:4571"
     environment:
       SERVICES: s3
       DEBUG: 0
-      DATA_DIR: /tmp/localstack/data
-      DOCKER_HOST: unix:///var/run/docker.sock
-      DEFAULT_REGION: us-east-1
+      PERSISTENCE: 1
+      SKIP_INFRA_DOWNLOADS: 1
     volumes:
-      - localstack_data:/tmp/localstack
-      - "/var/run/docker.sock:/var/run/docker.sock"
+      - localstack_data:/var/lib/localstack
     networks:
       - construction-network
     healthcheck:
@@ -90,12 +86,6 @@ services:
     volumes:
       - ./src:/app/src
       - ./scripts:/app/scripts
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
   # AWS CLI for LocalStack initialization
   localstack-init:
