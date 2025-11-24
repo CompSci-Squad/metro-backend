@@ -7,6 +7,10 @@ import dotenv from "dotenv"
 
 dotenv.config()
 
+console.log("☁️  Configurando cliente S3...")
+console.log(`   Região: ${process.env.AWS_REGION}`)
+console.log(`   Bucket: ${process.env.S3_BUCKET_NAME}`)
+
 const s3Config = {
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
@@ -17,11 +21,16 @@ const s3Config = {
 
 // Se AWS_ENDPOINT estiver definido (LocalStack), adiciona à configuração
 if (process.env.AWS_ENDPOINT) {
+  console.log(`   Endpoint: ${process.env.AWS_ENDPOINT} (LocalStack)`)
+  console.log(`   ForcePathStyle: true`)
   s3Config.endpoint = process.env.AWS_ENDPOINT
   s3Config.forcePathStyle = true // Necessário para LocalStack
+} else {
+  console.log(`   Endpoint: AWS padrão (produção)`)
 }
 
 const s3Client = new S3Client(s3Config)
+console.log("✅ Cliente S3 configurado com sucesso!")
 
 // Upload de fotos
 export const uploadFoto = multer({
@@ -38,14 +47,17 @@ export const uploadFoto = multer({
       const projectId = req.params.projectId || "unknown"
       const timestamp = Date.now()
       const fileName = `fotos/${projectId}/${timestamp}-${file.originalname}`
+      console.log(`📷 Upload de foto: ${fileName} (${(file.size / 1024).toFixed(2)} KB)`)
       cb(null, fileName)
     },
   }),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB para fotos grandes
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) {
+      console.log(`✅ Tipo de arquivo aceito: ${file.mimetype}`)
       cb(null, true)
     } else {
+      console.error(`❌ Tipo de arquivo rejeitado: ${file.mimetype}`)
       cb(new Error("Apenas imagens são permitidas!"), false)
     }
   },
@@ -60,15 +72,20 @@ export const uploadBIM = multer({
     key: (req, file, cb) => {
       const timestamp = Date.now()
       const fileName = `bim/${timestamp}-${file.originalname}`
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(2)
+      console.log(`🏛️  Upload de arquivo BIM: ${fileName} (${sizeMB} MB)`)
       cb(null, fileName)
     },
   }),
+  limits: { fileSize: 5 * 1024 * 1024 * 1024 }, // 5GB para arquivos BIM grandes
   fileFilter: (req, file, cb) => {
     const allowedExtensions = [".ifc", ".rvt", ".nwd", ".nwc", ".dwg", ".dxf"]
     const ext = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf("."))
     if (allowedExtensions.includes(ext)) {
+      console.log(`✅ Extensão BIM aceita: ${ext}`)
       cb(null, true)
     } else {
+      console.error(`❌ Extensão BIM rejeitada: ${ext}`)
       cb(new Error("Tipo de arquivo BIM não suportado!"), false)
     }
   },
@@ -76,12 +93,20 @@ export const uploadBIM = multer({
 
 // Função para gerar URL pré-assinada
 export async function generatePresignedUrl(key) {
-  const command = new GetObjectCommand({
-    Bucket: process.env.S3_BUCKET_NAME,
-    Key: key,
-  })
+  try {
+    console.log(`🔗 Gerando URL pré-assinada para: ${key}`)
+    const command = new GetObjectCommand({
+      Bucket: process.env.S3_BUCKET_NAME,
+      Key: key,
+    })
 
-  return await getSignedUrl(s3Client, command, { expiresIn: 3600 })
+    const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 })
+    console.log(`✅ URL gerada com sucesso (expira em 1h)`)
+    return url
+  } catch (error) {
+    console.error(`❌ Erro ao gerar URL pré-assinada: ${error.message}`)
+    throw error
+  }
 }
 
 export { s3Client }

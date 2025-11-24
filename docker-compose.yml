@@ -10,18 +10,25 @@ services:
       POSTGRES_DB: construction_monitoring
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres123
+      POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts:/docker-entrypoint-initdb.d
+      - ./scripts/001_create_tables.sql:/docker-entrypoint-initdb.d/001_create_tables.sql
     networks:
       - construction-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U postgres -d construction_monitoring"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # LocalStack (AWS S3 emulator)
   localstack:
@@ -35,57 +42,73 @@ services:
       DEBUG: 0
       PERSISTENCE: 1
       SKIP_INFRA_DOWNLOADS: 1
+      EDGE_PORT: 4566
     volumes:
       - localstack_data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - construction-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Backend API
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: construction-backend
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      # Database
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: construction_monitoring
-      DB_USER: postgres
-      DB_PASSWORD: postgres123
+  # backend:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: construction-backend
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     # Database
+  #     DB_HOST: postgres
+  #     DB_PORT: 5432
+  #     DB_NAME: construction_monitoring
+  #     DB_USER: postgres
+  #     DB_PASSWORD: postgres123
       
-      # AWS S3 (LocalStack)
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
-      AWS_REGION: us-east-1
-      AWS_ENDPOINT_URL: http://localstack:4566
-      S3_BUCKET_NAME: construction-monitoring-bucket
+  #     # AWS S3 (LocalStack)
+  #     AWS_ACCESS_KEY_ID: test
+  #     AWS_SECRET_ACCESS_KEY: test
+  #     AWS_REGION: us-east-1
+  #     AWS_ENDPOINT: http://localstack:4566
+  #     S3_BUCKET_NAME: construction-monitoring-bucket
       
-      # VIRAG-BIM API (configure with your ngrok URL)
-      NGROK_URL: ${NGROK_URL:-https://your-ngrok-url.ngrok-free.app}
-      VIRAG_API_KEY: ${VIRAG_API_KEY:-your_api_key}
+  #     # VIRAG-BIM API (configure with your ngrok URL)
+  #     NGROK_URL: ${NGROK_URL:-https://your-ngrok-url.ngrok-free.app}
+  #     VIRAG_API_KEY: ${VIRAG_API_KEY:-your_api_key}
       
-      # Server
-      PORT: 3000
-      NODE_ENV: production
-    depends_on:
-      postgres:
-        condition: service_healthy
-      localstack:
-        condition: service_healthy
-    networks:
-      - construction-network
-    volumes:
-      - ./src:/app/src
-      - ./scripts:/app/scripts
+  #     # Server
+  #     PORT: 3000
+  #     NODE_ENV: production
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     localstack:
+  #       condition: service_healthy
+  #   networks:
+  #     - construction-network
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+  #     interval: 15s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 60s
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
 
   # AWS CLI for LocalStack initialization
   localstack-init:
@@ -101,16 +124,32 @@ services:
     entrypoint: /bin/sh
     command: >
       -c "
-      echo 'Waiting for LocalStack to be ready...';
-      sleep 10;
-      echo 'Creating S3 bucket...';
-      aws --endpoint-url=http://localstack:4566 s3 mb s3://construction-monitoring-bucket || true;
-      echo 'Listing S3 buckets...';
+      echo '==========================================';
+      echo '☁️  Inicializando LocalStack S3...';
+      echo '==========================================';
+      sleep 5;
+      echo '';
+      echo '📦 Criando bucket S3...';
+      if aws --endpoint-url=http://localstack:4566 s3 mb s3://construction-monitoring-bucket 2>/dev/null; then
+        echo '✅ Bucket criado com sucesso!';
+      else
+        echo '⚠️  Bucket já existe (ok)';
+      fi;
+      echo '';
+      echo '📋 Listando buckets disponíveis:';
       aws --endpoint-url=http://localstack:4566 s3 ls;
-      echo 'LocalStack initialization complete!';
+      echo '';
+      echo '==========================================';
+      echo '✅ LocalStack inicializado com sucesso!';
+      echo '==========================================';
       "
     networks:
       - construction-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
 networks:
   construction-network:
